@@ -3,15 +3,15 @@
 #include "FrameGrabberActor.h"
 
 #if WITH_EDITOR
-	#include "Editor.h"
-	#include "Editor/EditorEngine.h"
-	#include "IAssetViewport.h"
+#include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "IAssetViewport.h"
 #endif
 
 // Sets default values
 AFrameGrabberActor::AFrameGrabberActor()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 
 }
@@ -57,23 +57,13 @@ void AFrameGrabberActor::Capture()
 		{
 			FCapturedFrameData& LastFrame = Frames.Last();
 
-			CaptureFrameData.Empty();
-
-			for (int32 i = 0; i < LastFrame.ColorBuffer.Num(); i++)
-			{
-				//FColor (R,G,B,A)->BGRA 
-				CaptureFrameData.Add(LastFrame.ColorBuffer[i].B);
-				CaptureFrameData.Add(LastFrame.ColorBuffer[i].G);
-				CaptureFrameData.Add(LastFrame.ColorBuffer[i].R);
-				CaptureFrameData.Add(LastFrame.ColorBuffer[i].A);
-			}
-
-
-			auto Region = new FUpdateTextureRegion2D(0, 0, 0, 0, LastFrame.BufferSize.X, LastFrame.BufferSize.Y);
-			CaptureFrameTexture->UpdateTextureRegions(0, 1, Region, 4 * LastFrame.BufferSize.X, 4, CaptureFrameData.GetData());
+			void* TextureData = CaptureFrameTexture->PlatformData->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+			FMemory::Memcpy(TextureData, LastFrame.ColorBuffer.GetData(), LastFrame.ColorBuffer.Num() * 4);
+			CaptureFrameTexture->PlatformData->Mips[0].BulkData.Unlock();
+			CaptureFrameTexture->UpdateResource();
 		}
 	}
-	
+
 }
 
 bool  AFrameGrabberActor::StartFrameGrab()
@@ -116,18 +106,15 @@ bool  AFrameGrabberActor::StartFrameGrab()
 		return false;
 	}
 
-	// Setup Texture
-	if (!CaptureFrameTexture)
-	{
-		CaptureFrameTexture = UTexture2D::CreateTransient(SceneViewport.Get()->GetSize().X, SceneViewport.Get()->GetSize().Y, PF_B8G8R8A8);
-		CaptureFrameTexture->UpdateResource();
 
-		MaterialInstanceDynamic->SetTextureParameterValue(FName("Texture"), CaptureFrameTexture);
-	}
-	
+	EPixelFormat pixelFormat = GetPixelFormatFromRenderTargetFormat(TextureFormat);
+	// Setup Texture
+	CaptureFrameTexture = UTexture2D::CreateTransient(SceneViewport.Get()->GetSize().X, SceneViewport.Get()->GetSize().Y, pixelFormat);
+	CaptureFrameTexture->UpdateResource();
+
 	// Capture Start
 	ReleaseFrameGrabber();
-	FrameGrabber = MakeShareable(new FFrameGrabber(SceneViewport.ToSharedRef(), SceneViewport->GetSize()));
+	FrameGrabber = MakeShareable(new FFrameGrabber(SceneViewport.ToSharedRef(), SceneViewport->GetSize(), pixelFormat));
 	FrameGrabber->StartCapturingFrames();
 
 	return true;
@@ -146,9 +133,4 @@ void AFrameGrabberActor::ReleaseFrameGrabber()
 		FrameGrabber->Shutdown();
 		FrameGrabber.Reset();
 	}
-}
-
-void AFrameGrabberActor::SetMaterialInstanceDynamic(UMaterialInstanceDynamic* MI)
-{
-	MaterialInstanceDynamic = MI;
 }
